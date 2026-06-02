@@ -42,7 +42,13 @@ class MessageRequest(BaseModel):
     message: str
 
 
+class TaskStatusRequest(BaseModel):
+    status: str = "archived"
+    status_detail: str | None = "reset for demo rehearsal"
+
+
 DEVIN_REMEDIATE_LABEL = "devin-remediate"
+ADMIN_STATUSES = {"archived", "completed", "blocked", "failed"}
 
 
 @app.get("/", include_in_schema=False)
@@ -206,6 +212,30 @@ async def send_task_message(task_id: int, request: MessageRequest) -> dict[str, 
         acu_consumed=extract_acu_consumed(payload),
     )
     return {"task": updated.to_dict()}
+
+
+@app.post("/api/admin/tasks/{task_id}/status")
+async def admin_update_task_status(
+    task_id: int,
+    request: TaskStatusRequest,
+    x_opsbridge_admin_token: str = Header(default="", alias="X-OpsBridge-Admin-Token"),
+) -> dict[str, Any]:
+    if not settings.github_webhook_secret or not hmac.compare_digest(
+        x_opsbridge_admin_token,
+        settings.github_webhook_secret,
+    ):
+        raise HTTPException(status_code=401, detail="Invalid admin token.")
+    if request.status not in ADMIN_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Status must be one of {sorted(ADMIN_STATUSES)}.")
+    try:
+        task = store.update_task(
+            task_id,
+            status=request.status,
+            status_detail=request.status_detail,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"task": task.to_dict()}
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
