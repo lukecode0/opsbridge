@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -49,6 +50,9 @@ class TaskStatusRequest(BaseModel):
 
 DEVIN_REMEDIATE_LABEL = "devin-remediate"
 ADMIN_STATUSES = {"archived", "completed", "blocked", "failed"}
+TERMINAL_STATUSES = {"completed", "failed", "blocked"}
+POLL_INTERVAL_SECONDS = 15
+POLL_ATTEMPTS = 40
 
 
 @app.get("/", include_in_schema=False)
@@ -331,6 +335,7 @@ async def start_devin_session(task_id: int) -> None:
             elapsed_seconds=round(time.monotonic() - start, 2),
         )
         await refresh_devin_session(task.id, session_id)
+        await poll_devin_session(task.id, session_id)
     except httpx.HTTPError as exc:
         store.update_task(task.id, status="failed", error=str(exc), elapsed_seconds=round(time.monotonic() - start, 2))
 
@@ -351,6 +356,14 @@ async def refresh_devin_session(task_id: int, session_id: str):
         )
     except httpx.HTTPError as exc:
         return store.update_task(task.id, status="failed", error=str(exc))
+
+
+async def poll_devin_session(task_id: int, session_id: str) -> None:
+    for _ in range(POLL_ATTEMPTS):
+        await asyncio.sleep(POLL_INTERVAL_SECONDS)
+        task = await refresh_devin_session(task_id, session_id)
+        if task.pr_url or task.status in TERMINAL_STATUSES:
+            return
 
 
 def link(url: str | None, label: str) -> str:

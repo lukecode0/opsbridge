@@ -3,9 +3,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
+import app.main as main
 from app.main import app, settings
 
 
@@ -98,6 +101,26 @@ def test_github_webhook_rejects_invalid_signature() -> None:
     )
 
     assert response.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_poll_devin_session_stops_when_pr_url_is_found(monkeypatch) -> None:
+    calls = 0
+
+    async def fake_sleep(_seconds: int) -> None:
+        return None
+
+    async def fake_refresh(_task_id: int, _session_id: str):
+        nonlocal calls
+        calls += 1
+        return SimpleNamespace(pr_url="https://github.com/lukecode0/superset/pull/99", status="running")
+
+    monkeypatch.setattr(main.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(main, "refresh_devin_session", fake_refresh)
+
+    await main.poll_devin_session(1, "session-id")
+
+    assert calls == 1
 
 
 def signature(payload: dict, secret: str) -> str:

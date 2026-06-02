@@ -143,7 +143,7 @@ OpsBridge stores every task in SQLite and reports:
 - active/completed/failed task counts
 - issue and trigger source
 - Devin session URL
-- PR URL when reported by Devin
+- PR URL when reported by Devin; live sessions are polled for a bounded window so PR output appears without manual syncing
 - requested ACU limit
 - consumed ACUs when reported by Devin
 - errors or blockers
