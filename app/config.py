@@ -23,6 +23,14 @@ def _bool_env(name: str, default: bool = False) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
+def _env(name: str, default: str = "") -> str:
+    value = os.getenv(name, default).strip()
+    prefix = f"{name}="
+    if value.startswith(prefix):
+        return value[len(prefix) :].strip()
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     devin_org_id: str
@@ -44,14 +52,14 @@ class Settings:
 def get_settings() -> Settings:
     _load_dotenv()
     return Settings(
-        devin_org_id=os.getenv("DEVIN_ORG_ID", ""),
-        devin_api_key=os.getenv("DEVIN_API_KEY", ""),
-        devin_api_base_url=os.getenv("DEVIN_API_BASE_URL", "https://api.devin.ai").rstrip("/"),
+        devin_org_id=_env("DEVIN_ORG_ID"),
+        devin_api_key=_env("DEVIN_API_KEY"),
+        devin_api_base_url=_env("DEVIN_API_BASE_URL", "https://api.devin.ai").rstrip("/"),
         devin_enable_real_calls=_bool_env("DEVIN_ENABLE_REAL_CALLS", False),
         devin_max_acu_limit=int(os.getenv("DEVIN_MAX_ACU_LIMIT", "2")),
-        superset_repo=os.getenv("SUPERSET_REPO", "lukecode0/superset"),
-        superset_repo_url=os.getenv("SUPERSET_REPO_URL", "https://github.com/lukecode0/superset"),
+        superset_repo=_env("SUPERSET_REPO", "lukecode0/superset"),
+        superset_repo_url=_env("SUPERSET_REPO_URL", "https://github.com/lukecode0/superset"),
         default_issue_number=int(os.getenv("DEFAULT_ISSUE_NUMBER", "3")),
-        database_path=os.getenv("DATABASE_PATH", "opsbridge.db"),
-        github_webhook_secret=os.getenv("GITHUB_WEBHOOK_SECRET", ""),
+        database_path=_env("DATABASE_PATH", "opsbridge.db"),
+        github_webhook_secret=_env("GITHUB_WEBHOOK_SECRET"),
     )
