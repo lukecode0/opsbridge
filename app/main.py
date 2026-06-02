@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import time
 from typing import Any
 
 import httpx
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
@@ -39,6 +42,9 @@ class MessageRequest(BaseModel):
     message: str
 
 
+DEVIN_REMEDIATE_LABEL = "devin-remediate"
+
+
 @app.get("/", include_in_schema=False)
 def root() -> RedirectResponse:
     return RedirectResponse(url="/dashboard")
@@ -51,6 +57,7 @@ def health() -> dict[str, Any]:
         "devin_configured": settings.devin_configured,
         "real_devin_calls_enabled": settings.devin_enable_real_calls,
         "superset_repo": settings.superset_repo,
+        "github_webhook_configured": bool(settings.github_webhook_secret),
     }
 
 
@@ -86,6 +93,74 @@ async def simulate_event(request: SimulateRequest, background_tasks: BackgroundT
         background_tasks.add_task(start_devin_session, task.id)
 
     return {"task": task.to_dict(), "dashboard_url": "/dashboard"}
+
+
+@app.post("/api/github/webhook")
+async def github_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    x_github_event: str = Header(default="", alias="X-GitHub-Event"),
+    x_github_delivery: str = Header(default="", alias="X-GitHub-Delivery"),
+    x_hub_signature_256: str = Header(default="", alias="X-Hub-Signature-256"),
+) -> dict[str, Any]:
+    body = await request.body()
+    verify_github_signature(body, x_hub_signature_256)
+
+    payload = json.loads(body)
+    if x_github_event != "issues":
+        return {"accepted": False, "reason": f"ignored event {x_github_event}"}
+
+    action = payload.get("action")
+    label_name = ((payload.get("label") or {}).get("name") or "").lower()
+    repo_name = (payload.get("repository") or {}).get("full_name")
+    if action != "labeled" or label_name != DEVIN_REMEDIATE_LABEL or repo_name != settings.superset_repo:
+        return {
+            "accepted": False,
+            "reason": "ignored issue event",
+            "action": action,
+            "label": label_name,
+            "repository": repo_name,
+        }
+
+    issue = payload.get("issue") or {}
+    issue_number = int(issue["number"])
+    issue_title = issue.get("title") or ISSUE_TITLES.get(issue_number, "GitHub remediation issue")
+    issue_url = issue.get("html_url") or f"{settings.superset_repo_url}/issues/{issue_number}"
+    prompt = build_devin_prompt(settings.superset_repo_url, issue_number, issue_title)
+    event_payload = {
+        "github_event": x_github_event,
+        "github_delivery": x_github_delivery,
+        "action": action,
+        "label": label_name,
+        "repository": repo_name,
+        "issue_number": issue_number,
+        "issue_title": issue_title,
+        "issue_url": issue_url,
+    }
+
+    task = store.create_task(
+        issue_number=issue_number,
+        issue_title=issue_title,
+        issue_url=issue_url,
+        trigger_source="github-issue-label-webhook",
+        acu_limit=settings.devin_max_acu_limit,
+        prompt=prompt,
+        event_payload=event_payload,
+    )
+
+    if not settings.devin_enable_real_calls:
+        payload = devin.build_session_payload(prompt=prompt, issue_number=issue_number)
+        task = store.update_task(
+            task.id,
+            status="dry_run",
+            status_detail="github webhook verified; session payload prepared",
+            error="Dry run only. Set DEVIN_ENABLE_REAL_CALLS=true to create a Devin session.",
+            event_payload={**event_payload, "devin_session_payload": payload},
+        )
+    else:
+        background_tasks.add_task(start_devin_session, task.id)
+
+    return {"accepted": True, "task": task.to_dict(), "dashboard_url": "/dashboard"}
 
 
 @app.get("/api/tasks")
@@ -250,3 +325,16 @@ async def refresh_devin_session(task_id: int, session_id: str):
 
 def link(url: str | None, label: str) -> str:
     return f'<a href="{url}">{label}</a>' if url else "-"
+
+
+def verify_github_signature(body: bytes, signature: str) -> None:
+    if not settings.github_webhook_secret:
+        raise HTTPException(status_code=500, detail="GITHUB_WEBHOOK_SECRET is not configured.")
+    expected = hmac.new(
+        settings.github_webhook_secret.encode("utf-8"),
+        body,
+        hashlib.sha256,
+    ).hexdigest()
+    expected_header = f"sha256={expected}"
+    if not hmac.compare_digest(expected_header, signature):
+        raise HTTPException(status_code=401, detail="Invalid GitHub webhook signature.")

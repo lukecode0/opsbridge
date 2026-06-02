@@ -96,6 +96,32 @@ curl -X POST http://localhost:8000/api/tasks/1/message \
   -d '{"message": "GitHub access has been granted. Please continue and open a PR. Do not merge it or close the issue."}'
 ```
 
+## GitHub Webhook Trigger
+
+OpsBridge can receive real GitHub issue events. Configure GitHub to send `issues` events to:
+
+```text
+https://YOUR_OPSBRIDGE_HOST/api/github/webhook
+```
+
+Use:
+
+```text
+Content type: application/json
+Secret: same value as GITHUB_WEBHOOK_SECRET
+Events: Issues
+```
+
+OpsBridge only accepts issue events that match:
+
+```text
+action = labeled
+label = devin-remediate
+repository = lukecode0/superset
+```
+
+With `DEVIN_ENABLE_REAL_CALLS=false`, webhook events create dry-run tasks and do not spend Devin credits. Flip `DEVIN_ENABLE_REAL_CALLS=true` only when ready for a live run.
+
 ## Reset Demo State
 
 Local Python run:

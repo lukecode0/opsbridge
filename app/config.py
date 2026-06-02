@@ -34,6 +34,7 @@ class Settings:
     superset_repo_url: str
     default_issue_number: int
     database_path: str
+    github_webhook_secret: str
 
     @property
     def devin_configured(self) -> bool:
@@ -52,4 +53,5 @@ def get_settings() -> Settings:
         superset_repo_url=os.getenv("SUPERSET_REPO_URL", "https://github.com/lukecode0/superset"),
         default_issue_number=int(os.getenv("DEFAULT_ISSUE_NUMBER", "3")),
         database_path=os.getenv("DATABASE_PATH", "opsbridge.db"),
+        github_webhook_secret=os.getenv("GITHUB_WEBHOOK_SECRET", ""),
     )
